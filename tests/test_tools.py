@@ -128,3 +128,146 @@ class TestMonitorTools:
         assert classify_alert_severity.invoke({"anomaly_score": 4.99})["severity"] == "MEDIUM"
         assert classify_alert_severity.invoke({"anomaly_score": 3.0})["severity"] == "MEDIUM"
         assert classify_alert_severity.invoke({"anomaly_score": 2.99})["severity"] == "LOW"
+
+
+class TestRCATools:
+    """RCA 工具测试"""
+
+    def test_query_service_dependencies(self):
+        """测试查询服务依赖"""
+        from tools.rca_tools import query_service_dependencies
+
+        result = query_service_dependencies.invoke({
+            "service_name": "order-service"
+        })
+
+        assert result["service"] == "order-service"
+        assert "payment-service" in result["direct_dependencies"]
+        assert "inventory-service" in result["direct_dependencies"]
+        assert result["count"] > 0
+
+    def test_query_service_dependencies_no_deps(self):
+        """测试查询无依赖的服务"""
+        from tools.rca_tools import query_service_dependencies
+
+        result = query_service_dependencies.invoke({
+            "service_name": "mysql-primary"  # 数据库没有依赖其他服务
+        })
+
+        assert result["service"] == "mysql-primary"
+        assert result["count"] == 0
+
+    def test_trace_impact_chain(self):
+        """测试追踪故障影响链"""
+        from tools.rca_tools import trace_impact_chain
+
+        result = trace_impact_chain.invoke({
+            "service_name": "order-service",
+            "max_depth": 5
+        })
+
+        assert result["root_service"] == "order-service"
+        assert len(result["dependency_paths"]) > 0
+        assert len(result["affected_services"]) > 0
+        # order-service 的影响范围应该包括 payment-service 和 mysql
+        assert "payment-service" in result["affected_services"]
+        assert "mysql-primary" in result["affected_services"]
+
+    def test_trace_impact_chain_leaf_node(self):
+        """测试追踪叶子节点（无下游依赖）的影响"""
+        from tools.rca_tools import trace_impact_chain
+
+        result = trace_impact_chain.invoke({
+            "service_name": "mysql-primary",
+            "max_depth": 5
+        })
+
+        assert result["root_service"] == "mysql-primary"
+        # mysql-primary 没有依赖其他服务，所以 affected_services 应该为空
+        assert len(result["affected_services"]) == 0
+
+    def test_find_recent_changes_in_service(self):
+        """测试查询近期变更"""
+        from tools.rca_tools import find_recent_changes_in_service
+
+        result = find_recent_changes_in_service.invoke({
+            "service_name": "order-service",
+            "hours": 24
+        })
+
+        assert result["service"] == "order-service"
+        assert result["time_window_hours"] == 24
+        assert isinstance(result["changes"], list)
+        assert result["change_count"] >= 0
+
+    def test_find_recent_changes_with_different_timewindow(self):
+        """测试不同时间窗口的变更查询"""
+        from tools.rca_tools import find_recent_changes_in_service
+
+        result_24h = find_recent_changes_in_service.invoke({
+            "service_name": "order-service",
+            "hours": 24
+        })
+
+        result_1h = find_recent_changes_in_service.invoke({
+            "service_name": "order-service",
+            "hours": 1
+        })
+
+        # 1小时的变更数应该 <= 24小时的
+        assert result_1h["change_count"] <= result_24h["change_count"]
+
+    def test_list_fault_candidates_high_cpu(self):
+        """测试列出 CPU 告警的根因候选"""
+        from tools.rca_tools import list_fault_candidates
+
+        result = list_fault_candidates.invoke({
+            "alert_type": "high_cpu_usage"
+        })
+
+        assert result["alert_type"] == "high_cpu_usage"
+        assert result["candidate_count"] > 0
+        assert len(result["candidates"]) > 0
+
+        # 检查候选的结构
+        for candidate in result["candidates"]:
+            assert "root_cause" in candidate
+            assert "evidence_pattern" in candidate
+            assert "base_probability" in candidate
+            assert "suggested_actions" in candidate
+            assert 0 <= candidate["base_probability"] <= 1
+
+    def test_list_fault_candidates_high_memory(self):
+        """测试列出内存告警的根因候选"""
+        from tools.rca_tools import list_fault_candidates
+
+        result = list_fault_candidates.invoke({
+            "alert_type": "high_memory_usage"
+        })
+
+        assert result["alert_type"] == "high_memory_usage"
+        assert result["candidate_count"] > 0
+
+    def test_list_fault_candidates_high_error_rate(self):
+        """测试列出错误率告警的根因候选"""
+        from tools.rca_tools import list_fault_candidates
+
+        result = list_fault_candidates.invoke({
+            "alert_type": "high_error_rate"
+        })
+
+        assert result["alert_type"] == "high_error_rate"
+        assert result["candidate_count"] > 0
+
+    def test_list_fault_candidates_unknown_type(self):
+        """测试未知告警类型"""
+        from tools.rca_tools import list_fault_candidates
+
+        result = list_fault_candidates.invoke({
+            "alert_type": "unknown_alert_type"
+        })
+
+        assert result["alert_type"] == "unknown_alert_type"
+        assert result["candidate_count"] == 0
+        assert len(result["candidates"]) == 0
+        assert "未知" in result["message"]
