@@ -390,3 +390,174 @@ class TestHealTools:
         result = check_circuit_breaker_status.invoke({})
         assert result["state"] == "OPEN"
         assert result["allowed"] == False
+
+
+class TestChangeTools:
+    """Change 工具测试"""
+
+    def test_calculate_risk_score_low_risk(self):
+        """测试低风险场景（restart_pod）"""
+        from tools.change_tools import calculate_risk_score
+
+        result = calculate_risk_score.invoke({
+            "action_type": "restart_pod",
+            "blast_radius": 0.05,
+            "target_service": "order-service",
+            "estimated_duration_sec": 30
+        })
+
+        assert result["risk_score"] < 3.0
+        assert result["action_type"] == "restart_pod"
+        assert result["blast_radius"] == 0.05
+        assert "risk_score" in result
+        assert "explanation" in result
+
+    def test_calculate_risk_score_high_risk(self):
+        """测试高风险场景（rollback + payment-service）"""
+        from tools.change_tools import calculate_risk_score
+
+        result = calculate_risk_score.invoke({
+            "action_type": "rollback",
+            "blast_radius": 0.15,
+            "target_service": "payment-service",
+            "estimated_duration_sec": 120
+        })
+
+        assert result["risk_score"] >= 3.0  # rollback 是高风险操作
+        assert result["action_type"] == "rollback"
+        assert "current_hour" in result
+        assert "time_window" in result
+
+    def test_calculate_risk_score_unknown_action(self):
+        """测试未知操作类型"""
+        from tools.change_tools import calculate_risk_score
+
+        result = calculate_risk_score.invoke({
+            "action_type": "unknown_action",
+            "blast_radius": 0.1,
+            "target_service": "order-service",
+        })
+
+        # 未知操作会用默认风险值 0.5
+        assert "risk_score" in result
+        assert 0 <= result["risk_score"] <= 10.0
+
+    def test_apply_approval_policy_auto_approve(self):
+        """测试低风险 → 自动批准"""
+        from tools.change_tools import apply_approval_policy
+
+        result = apply_approval_policy.invoke({
+            "risk_score": 2.0,
+            "heal_level": "L0_AUTO",
+            "incident_severity": "MEDIUM"
+        })
+
+        assert result["approval"] == "AUTO_APPROVE"
+        assert result["approved"] == True
+        assert "立即执行修复" in result["recommendation"]
+
+    def test_apply_approval_policy_oncall_approval(self):
+        """测试中风险 → 需要 oncall 审批"""
+        from tools.change_tools import apply_approval_policy
+
+        result = apply_approval_policy.invoke({
+            "risk_score": 4.5,
+            "heal_level": "L1_SEMI",
+            "incident_severity": "HIGH"
+        })
+
+        assert result["approval"] == "NEED_ONCALL_APPROVAL"
+        assert result["approved"] == True
+        assert "oncall" in result["recommendation"]
+
+    def test_apply_approval_policy_reject(self):
+        """测试高风险 → 拒绝"""
+        from tools.change_tools import apply_approval_policy
+
+        result = apply_approval_policy.invoke({
+            "risk_score": 7.0,
+            "heal_level": "L2_MANUAL",
+            "incident_severity": "CRITICAL"
+        })
+
+        assert result["approval"] == "REJECT"
+        assert result["approved"] == False
+        assert "拒绝" in result["recommendation"]
+
+    def test_apply_approval_policy_emergency_override(self):
+        """测试紧急覆盖（L0_AUTO + CRITICAL 自动批准）"""
+        from tools.change_tools import apply_approval_policy
+
+        # 中风险但 L0_AUTO + CRITICAL → 自动批准（紧急）
+        result = apply_approval_policy.invoke({
+            "risk_score": 4.0,
+            "heal_level": "L0_AUTO",
+            "incident_severity": "CRITICAL"
+        })
+
+        assert result["approval"] == "AUTO_APPROVE"
+        assert result["approved"] == True
+
+    def test_apply_approval_policy_boundary_low(self):
+        """测试边界值（风险恰好 3.0）"""
+        from tools.change_tools import apply_approval_policy
+
+        result = apply_approval_policy.invoke({
+            "risk_score": 3.0,
+            "heal_level": "L0_AUTO",
+            "incident_severity": "HIGH"
+        })
+
+        # 3.0 时应该需要 oncall 审批
+        assert result["approval"] == "NEED_ONCALL_APPROVAL"
+
+    def test_apply_approval_policy_boundary_high(self):
+        """测试边界值（风险恰好 6.5）"""
+        from tools.change_tools import apply_approval_policy
+
+        result = apply_approval_policy.invoke({
+            "risk_score": 6.5,
+            "heal_level": "L1_SEMI",
+            "incident_severity": "CRITICAL"
+        })
+
+        # 6.5 时应该拒绝
+        assert result["approval"] == "REJECT"
+        assert result["approved"] == False
+
+    def test_notify_oncall_success(self):
+        """测试通知 oncall 成功"""
+        from tools.change_tools import notify_oncall
+
+        result = notify_oncall.invoke({
+            "incident_id": "incident_12345",
+            "service_name": "order-service",
+            "risk_score": 4.5,
+            "proposed_action": "rollback",
+            "approval_timeout_sec": 1800
+        })
+
+        assert result["status"] == "NOTIFIED"
+        assert "notify_" in result["notification_id"]
+        assert result["incident_id"] == "incident_12345"
+        assert result["service_name"] == "order-service"
+        assert result["proposed_action"] == "rollback"
+        assert result["timeout_seconds"] == 1800
+        assert result["auto_reject_on_timeout"] == True
+        assert "message_preview" in result
+        assert "审批" in result["message_preview"]
+
+    def test_notify_oncall_different_timeout(self):
+        """测试不同的审批超时时间"""
+        from tools.change_tools import notify_oncall
+
+        result = notify_oncall.invoke({
+            "incident_id": "incident_67890",
+            "service_name": "payment-service",
+            "risk_score": 5.5,
+            "proposed_action": "scale_up",
+            "approval_timeout_sec": 3600  # 1 小时
+        })
+
+        assert result["timeout_seconds"] == 3600
+        assert "60 分钟" in result["message_preview"]
