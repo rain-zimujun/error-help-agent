@@ -116,7 +116,7 @@ def create_rca_agent(llm = None):
 
     llm_with_tools = llm.bind_tools(tools)
 
-    agent = create_agent(model=llm,tools=tools,system_prompt=RCA_SYSTEM_PROMPT)
+    agent = create_agent(model=llm_with_tools,tools=tools,system_prompt=RCA_SYSTEM_PROMPT)
 
     return agent
 
@@ -158,6 +158,47 @@ def create_heal_agent(llm = None):
 
     llm_with_tools = llm.bind_tools(tools)
 
-    agent = create_agent(model=llm,tools=tools,system_prompt=HEAL_SYSTEM_PROMPT)
+    agent = create_agent(model=llm_with_tools,tools=tools,system_prompt=HEAL_SYSTEM_PROMPT)
+
+    return agent
+
+# CHANGE_Agent的提示词
+CHANGE_SYSTEM_PROMPT = """                                                                                                                                                                                                       
+  你是一个变更决策 Agent。你的职责是：                                                                                                                                                                                             
+
+  1. 评估风险分数                                                                                                                                                                                                                  
+     - 使用 calculate_risk_score 计算修复方案的综合风险（0-10）                                                                                                                                                                    
+     - 考虑：操作类型、爆炸半径、服务关键度、时间窗口                                                                                                                                                                              
+
+  2. 应用批准策略                                                                                                                                                                                                                  
+     - 使用 apply_approval_policy 根据风险分数和修复级别决定是否批准                                                                                                                                                               
+     - 低风险：自动批准                                                                                                                                                                                                            
+     - 中风险：需要 oncall 审批                                                                                                                                                                                                    
+     - 高风险：拒绝                                                                                                                                                                                                                
+
+  3. 通知 oncall（如果需要人工审批）                                                                                                                                                                                               
+     - 使用 notify_oncall 发送通知给值班人员                                                                                                                                                                                       
+     - 设置 30 分钟的审批超时                                                                                                                                                                                                      
+
+  最后返回：                                                                                                                                                                                                                       
+  - approval: AUTO_APPROVE / NEED_ONCALL_APPROVAL / REJECT                                                                                                                                                                         
+  - risk_score: 风险分数                                                                                                                                                                                                           
+  - notification_id: 如果需要审批，返回通知 ID                                                                                                                                                                                     
+  - recommendation: 后续建议                                                                                                                                                                                                       
+
+  记住：安全第一，高风险操作不能自动执行！                                                                                                                                                                                         
+  """
+
+def create_change_agent(llm = None):
+    if llm is None:
+        llm = gpt_llm
+
+    from tools.change_tools import (calculate_risk_score, apply_approval_policy, notify_oncall)
+
+    tools = [calculate_risk_score, apply_approval_policy, notify_oncall]
+
+    llm_with_tools = llm.bind_tools(tools)
+
+    agent = create_agent(model=llm_with_tools, tools=tools, system_prompt=CHANGE_SYSTEM_PROMPT)
 
     return agent
