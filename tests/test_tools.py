@@ -271,3 +271,122 @@ class TestRCATools:
         assert result["candidate_count"] == 0
         assert len(result["candidates"]) == 0
         assert "未知" in result["message"]
+
+
+class TestHealTools:
+    """Heal 工具测试"""
+
+    def setup_method(self):
+        """每个测试前重置熔断器状态"""
+        from tools.heal_tools import circuit_breaker
+        circuit_breaker._failure_count = 0
+        circuit_breaker._state = "CLOSED"
+
+    def test_check_circuit_breaker_closed(self):
+        """测试熔断器正常状态"""
+        from tools.heal_tools import check_circuit_breaker_status
+
+        result = check_circuit_breaker_status.invoke({})
+
+        assert result["state"] == "CLOSED"
+        assert result["allowed"] == True
+
+    def test_match_remediation_playbook_found(self):
+        """测试匹配到 Playbook"""
+        from tools.heal_tools import match_remediation_playbook
+
+        result = match_remediation_playbook.invoke({
+            "suggested_actions": ["rollback", "restart_pod"]
+        })
+
+        # 应该选择风险更低的 restart_pod（L0）而不是 rollback（L1）
+        assert result["action"] == "restart_pod"
+        assert result["level"] == "L0_AUTO"
+        assert "blast_radius_factor" in result
+
+    def test_match_remediation_playbook_not_found(self):
+        """测试没有匹配的 Playbook"""
+        from tools.heal_tools import match_remediation_playbook
+
+        result = match_remediation_playbook.invoke({
+            "suggested_actions": ["unknown_action", "another_unknown"]
+        })
+
+        assert result["action"] is None
+        assert "没有找到" in result["message"]
+
+    def test_match_remediation_playbook_priority(self):
+        """测试优先级排序（L0 优先于 L1）"""
+        from tools.heal_tools import match_remediation_playbook
+
+        result = match_remediation_playbook.invoke({
+            "suggested_actions": ["rollback", "scale_up"]  # L1 和 L0
+        })
+
+        # 应该选 L0（scale_up）
+        assert result["action"] == "scale_up"
+        assert result["level"] == "L0_AUTO"
+
+    def test_simulate_dry_run_success(self):
+        """测试模拟执行成功"""
+        from tools.heal_tools import simulate_dry_run
+
+        result = simulate_dry_run.invoke({
+            "action_type": "restart_pod",
+            "service_name": "order-service"
+        })
+
+        assert result["status"] == "SUCCESS"
+        assert "kubectl" in result["output"]
+        assert "order-service" in result["output"]
+
+    def test_simulate_dry_run_unknown_action(self):
+        """测试未知动作"""
+        from tools.heal_tools import simulate_dry_run
+
+        result = simulate_dry_run.invoke({
+            "action_type": "unknown_action",
+            "service_name": "order-service"
+        })
+
+        assert result["status"] == "FAILED"
+        assert "未知" in result["output"]
+
+    def test_record_heal_result_success(self):
+        """测试记录修复成功"""
+        from tools.heal_tools import record_heal_result, circuit_breaker
+
+        # 先触发一次失败
+        record_heal_result.invoke({"success": False})
+        assert circuit_breaker._failure_count == 1
+
+        # 再记录成功，应该重置计数
+        result = record_heal_result.invoke({"success": True})
+
+        assert result["circuit_breaker_state"] == "CLOSED"
+        assert result["failure_count"] == 0
+
+    def test_record_heal_result_failure_accumulates(self):
+        """测试多次失败会增加计数"""
+        from tools.heal_tools import record_heal_result, circuit_breaker
+
+        # 连续记录 3 次失败
+        for _ in range(3):
+            record_heal_result.invoke({"success": False})
+
+        assert circuit_breaker._failure_count == 3
+
+    def test_circuit_breaker_opens_on_threshold(self):
+        """测试熔断器在达到阈值后打开"""
+        from tools.heal_tools import record_heal_result, check_circuit_breaker_status, circuit_breaker
+
+        # 连续失败 5 次（达到阈值）
+        for _ in range(5):
+            record_heal_result.invoke({"success": False})
+
+        # 熔断器应该打开
+        assert circuit_breaker.state == "OPEN"
+
+        result = check_circuit_breaker_status.invoke({})
+        assert result["state"] == "OPEN"
+        assert result["allowed"] == False
