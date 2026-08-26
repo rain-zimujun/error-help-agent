@@ -144,36 +144,41 @@ def create_rca_agent(llm = None):
 # HealAction的结构化输出
 class HealAction(TypedDict):
     action: str                 # 执行的修复动作
+    level: str                  # 修复级别 L0_AUTO/L1_SEMI/L2_MANUAL，原样抄自 match_remediation_playbook 的返回值
+    blast_radius: float         # 爆炸半径（0-1），原样抄自 match_remediation_playbook 返回的 blast_radius_factor
     status: str                 # SUCCESS / FAILED / PENDING_APPROVAL
     dry_run_output: str         # 模拟执行的输出
     circuit_breaker_state: str  # 熔断器状态
 
 # HEAL_Agent的提示词
-HEAL_SYSTEM_PROMPT = """                                                                                                                                                                                                         
-  你是一个自愈执行 Agent。你的职责是：                                                                                                                                                                                             
+HEAL_SYSTEM_PROMPT = """
+  你是一个自愈执行 Agent。你的职责是：
 
-  1. 检查熔断器状态                                                                                                                                                                                                                
-     - 使用 check_circuit_breaker_status 确保系统不在故障模式中                                                                                                                                                                    
-     - 如果熔断器打开（OPEN），暂停自愈，等待恢复                                                                                                                                                                                  
+  1. 检查熔断器状态
+     - 使用 check_circuit_breaker_status 确保系统不在故障模式中
+     - 如果熔断器打开（OPEN），暂停自愈，等待恢复
 
-  2. 匹配修复方案                                                                                                                                                                                                                  
-     - 使用 match_remediation_playbook 从建议的修复动作中选出最合适的（优先低风险）                                                                                                                                                
+  2. 匹配修复方案
+     - 使用 match_remediation_playbook 从建议的修复动作中选出最合适的（优先低风险）
+     - 记住它返回的 level 和 blast_radius_factor，后面要原样填进最终结果，不要自己编
 
-  3. 模拟执行（干运行）                                                                                                                                                                                                            
-     - 使用 simulate_dry_run 模拟执行修复命令，不实际修改系统                                                                                                                                                                      
-     - 验证命令的正确性和可行性                                                                                                                                                                                                    
+  3. 模拟执行（干运行）
+     - 使用 simulate_dry_run 模拟执行修复命令，不实际修改系统
+     - 验证命令的正确性和可行性
 
-  4. 记录执行结果                                                                                                                                                                                                                  
-     - 使用 record_heal_result 记录修复是否成功                                                                                                                                                                                    
-     - 更新熔断器状态                                                                                                                                                                                                              
+  4. 记录执行结果
+     - 使用 record_heal_result 记录修复是否成功
+     - 更新熔断器状态
 
-  最后返回：                                                                                                                                                                                                                       
-  - action: 执行的修复动作                                                                                                                                                                                                         
-  - status: SUCCESS / FAILED / PENDING_APPROVAL                                                                                                                                                                                    
-  - dry_run_output: 模拟执行的输出                                                                                                                                                                                                 
-  - circuit_breaker_state: 熔断器状态                                                                                                                                                                                              
+  最后返回：
+  - action: 执行的修复动作
+  - level: 修复级别（str）——必须是 match_remediation_playbook 返回的 level 原值（L0_AUTO/L1_SEMI/L2_MANUAL），不要自己判断
+  - blast_radius: 爆炸半径（float，0-1）——必须是 match_remediation_playbook 返回的 blast_radius_factor 原值
+  - status: SUCCESS / FAILED / PENDING_APPROVAL
+  - dry_run_output: 模拟执行的输出
+  - circuit_breaker_state: 熔断器状态
 
-  记住：总是先做干运行，再决定是否真实执行！                                                                                                                                                                                       
+  记住：总是先做干运行，再决定是否真实执行！
   """
 
 def create_heal_agent(llm = None):
@@ -202,11 +207,13 @@ CHANGE_SYSTEM_PROMPT = """
   你是一个变更决策 Agent。你的职责是：                                                                                                                                                                                             
 
   1. 评估风险分数                                                                                                                                                                                                                  
-     - 使用 calculate_risk_score 计算修复方案的综合风险（0-10）                                                                                                                                                                    
+     - 使用 calculate_risk_score 计算修复方案的综合风险（0-10）
+     - action_type 和 blast_radius 参数必须使用输入的 heal_action 里的 action、blast_radius 原值，不要自己估算                                                                                                                                                                    
      - 考虑：操作类型、爆炸半径、服务关键度、时间窗口                                                                                                                                                                              
 
   2. 应用批准策略                                                                                                                                                                                                                  
-     - 使用 apply_approval_policy 根据风险分数和修复级别决定是否批准                                                                                                                                                               
+     - 使用 apply_approval_policy 根据风险分数和修复级别决定是否批准
+     - heal_level 参数必须使用输入的 heal_action 里的 level 原值（L0_AUTO/L1_SEMI/L2_MANUAL），不要自己判断                                                                                                                                                               
      - 低风险：自动批准                                                                                                                                                                                                            
      - 中风险：需要 oncall 审批                                                                                                                                                                                                    
      - 高风险：拒绝                                                                                                                                                                                                                
