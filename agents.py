@@ -36,31 +36,33 @@ class AlertEvent(TypedDict):
     severity: str  # 告警级别：CRITICAL/HIGH/MEDIUM/LOW
     anomaly_score: float  # 异常分数 0-10
     service: str  # 故障服务
+    alert_name: str  # 告警类型，原样透传自输入的 metric_data.alert_name（供 RCA 阶段 list_fault_candidates 使用）
 
 # MONITOR_AGENT的提示词
-MONITOR_SYSTEM_PROMPT = """                                                                                                                                                                                                      
-你是一个异常监测 Agent。你的职责是：                                                                                                                                                                                             
+MONITOR_SYSTEM_PROMPT = """
+你是一个异常监测 Agent。你的职责是：
 
-1. 检测时序数据中的异常                                                                                                                                                                                                          
-   - 使用 run_anomaly_detection 工具分析指标历史数据                                                                                                                                                                             
-   - 输出：算法投票结果、综合异常分数                                                                                                                                                                                            
+1. 检测时序数据中的异常
+   - 使用 run_anomaly_detection 工具分析指标历史数据
+   - 输出：算法投票结果、综合异常分数
 
-2. 去重：检查告警是否重复                                                                                                                                                                                                        
-   - 使用 check_alert_duplicate 工具                                                                                                                                                                                             
-   - 同一个告警在 5 分钟内只算一次                                                                                                                                                                                               
+2. 去重：检查告警是否重复
+   - 使用 check_alert_duplicate 工具
+   - 同一个告警在 5 分钟内只算一次
 
-3. 分级：对检测到的异常进行严重程度分级                                                                                                                                                                                          
-   - 使用 classify_alert_severity 工具                                                                                                                                                                                           
-   - 输出：CRITICAL / HIGH / MEDIUM / LOW                                                                                                                                                                                        
+3. 分级：对检测到的异常进行严重程度分级
+   - 使用 classify_alert_severity 工具
+   - 输出：CRITICAL / HIGH / MEDIUM / LOW
 
-最后，你要返回一个结构化的告警结果，包含：                                                                                                                                                                                       
-- is_anomaly: 是否检测到异常（bool）                                                                                                                                                                                             
-- is_duplicate: 是否重复告警（bool）                                                                                                                                                                                             
-- severity: 告警级别（str）                                                                                                                                                                                                      
-- anomaly_score: 异常分数 0-10（float）                                                                                                                                                                                          
-- service: 故障服务（str）                                                                                                                                                                                                       
+最后，你要返回一个结构化的告警结果，包含：
+- is_anomaly: 是否检测到异常（bool）
+- is_duplicate: 是否重复告警（bool）
+- severity: 告警级别（str）
+- anomaly_score: 异常分数 0-10（float）
+- service: 故障服务（str）
+- alert_name: 告警类型（str）——必须原样抄写输入数据里的 alert_name 字段，不要改写、不要翻译、不要总结，后续根因分析要用这个精确值去查表
 
-开始工作吧！                                                                                                                                                                                                                     
+开始工作吧！
 """
 
 def create_monitor_agent(llm: ChatOpenAI = None):
@@ -109,8 +111,9 @@ RCA_SYSTEM_PROMPT = """
   3. 查找近期变更                                                                                                                                                                                                                  
      - 使用 find_recent_changes_in_service 看最近改过什么（最可能是根因）                                                                                                                                                          
 
-  4. 列出根因候选                                                                                                                                                                                                                  
-     - 使用 list_fault_candidates 根据告警类型列出可能的根因及其概率                                                                                                                                                               
+  4. 列出根因候选
+     - 使用 list_fault_candidates 根据告警类型列出可能的根因及其概率
+     - alert_type 参数必须原样使用告警数据里的 alert_name 字段值，不要自己改写或翻译，否则查不到预置的候选根因
 
   最后，综合这些信息，用贝叶斯推理计算后验概率，给出：                                                                                                                                                                             
   - root_cause: 最可能的根因                                                                                                                                                                                                       
