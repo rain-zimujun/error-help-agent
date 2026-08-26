@@ -1,5 +1,5 @@
-from typing import TypedDict, Optional, Annotated
-from langchain_core.messages import BaseMessage, add_messages
+from typing import TypedDict, Optional
+from langchain_core.messages import BaseMessage
 from datetime import datetime
 
 class IncidentState(TypedDict):
@@ -18,7 +18,8 @@ class IncidentState(TypedDict):
     change_decision: Optional[dict]  # Change Agent 的输出
 
     # LLM 消息链(用于追踪ReAct过程)
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: list[BaseMessage]
+
 
 
 def create_initial_state(incident_id: str, metric_data: dict) -> IncidentState:
