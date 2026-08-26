@@ -5,6 +5,7 @@ from langchain_core.tools import Tool
 import logging
 from dotenv import load_dotenv
 import os
+from typing_extensions import TypedDict, NotRequired
 
 load_dotenv(override=True)
 
@@ -27,6 +28,15 @@ gpt_llm = ChatOpenAI(
             base_url=ICE_BASE_URL,
             temperature=0.0
         )
+
+# AlertEvent的结构化输出
+class AlertEvent(TypedDict):
+    is_anomaly: bool  # 是否检测到异常
+    is_duplicate: bool  # 是否重复告警
+    severity: str  # 告警级别：CRITICAL/HIGH/MEDIUM/LOW
+    anomaly_score: float  # 异常分数 0-10
+    service: str  # 故障服务
+
 # MONITOR_AGENT的提示词
 MONITOR_SYSTEM_PROMPT = """                                                                                                                                                                                                      
 你是一个异常监测 Agent。你的职责是：                                                                                                                                                                                             
@@ -73,10 +83,18 @@ def create_monitor_agent(llm: ChatOpenAI = None):
     agent = create_agent(
         model=llm_with_tools,
         tools=tools,
-        system_prompt=MONITOR_SYSTEM_PROMPT
+        system_prompt=MONITOR_SYSTEM_PROMPT,
+        response_format=AlertEvent
     )
 
     return agent
+
+# RCAResult的结构化输出
+class RCAResult(TypedDict):
+    root_cause: str                # 最可能的根因
+    confidence: float              # 置信度（0-1）
+    affected_services: list[str]   # 受影响的服务列表
+    suggested_actions: list[str]   # 建议的修复动作
 
 # RCA_Agent的提示词
 RCA_SYSTEM_PROMPT = """                                                                                                                                                                                                          
@@ -116,9 +134,16 @@ def create_rca_agent(llm = None):
 
     llm_with_tools = llm.bind_tools(tools)
 
-    agent = create_agent(model=llm_with_tools,tools=tools,system_prompt=RCA_SYSTEM_PROMPT)
+    agent = create_agent(model=llm_with_tools,tools=tools,system_prompt=RCA_SYSTEM_PROMPT,response_format=RCAResult)
 
     return agent
+
+# HealAction的结构化输出
+class HealAction(TypedDict):
+    action: str                 # 执行的修复动作
+    status: str                 # SUCCESS / FAILED / PENDING_APPROVAL
+    dry_run_output: str         # 模拟执行的输出
+    circuit_breaker_state: str  # 熔断器状态
 
 # HEAL_Agent的提示词
 HEAL_SYSTEM_PROMPT = """                                                                                                                                                                                                         
@@ -158,9 +183,16 @@ def create_heal_agent(llm = None):
 
     llm_with_tools = llm.bind_tools(tools)
 
-    agent = create_agent(model=llm_with_tools,tools=tools,system_prompt=HEAL_SYSTEM_PROMPT)
+    agent = create_agent(model=llm_with_tools,tools=tools,system_prompt=HEAL_SYSTEM_PROMPT,response_format=HealAction)
 
     return agent
+
+# ChangeDecision的结构化输出
+class ChangeDecision(TypedDict):
+    approval: str                       # AUTO_APPROVE / NEED_ONCALL_APPROVAL / REJECT
+    risk_score: float                   # 风险分数
+    notification_id: NotRequired[str]   # 如果需要审批，返回通知 ID（可选）
+    recommendation: str                 # 后续建议
 
 # CHANGE_Agent的提示词
 CHANGE_SYSTEM_PROMPT = """                                                                                                                                                                                                       
@@ -199,6 +231,6 @@ def create_change_agent(llm = None):
 
     llm_with_tools = llm.bind_tools(tools)
 
-    agent = create_agent(model=llm_with_tools, tools=tools, system_prompt=CHANGE_SYSTEM_PROMPT)
+    agent = create_agent(model=llm_with_tools, tools=tools, system_prompt=CHANGE_SYSTEM_PROMPT, response_format=ChangeDecision)
 
     return agent
