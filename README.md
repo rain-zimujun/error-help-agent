@@ -1,6 +1,6 @@
 # error-help-agent
 
-基于 [LangGraph](https://github.com/langchain-ai/langgraph) 构建的 Multi-Agent 故障自愈系统。用 4 个 LLM Agent（Monitor → RCA → Heal → Change）串联起一次故障从检测到审批的完整处理流程，每个 Agent 通过 ReAct 循环自主调用工具完成分析，而不是硬编码的 if/else 流程。
+基于 [LangGraph](https://github.com/langchain-ai/langgraph) 构建的故障自愈系统。用 4 个 LLM Agent（Monitor → RCA → Heal → Change）串联起一次故障从检测到审批的完整处理流程，每个 Agent 通过 ReAct 循环自主调用工具完成分析，而不是硬编码的 if/else 流程。
 
 ## 📖 这个项目是什么？
 
